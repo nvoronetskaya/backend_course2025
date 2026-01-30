@@ -17,5 +17,5 @@ async def get_prediction(request: PredictRequest):
     Returns: PredictResponse: Model predictions on success (200)
              HTTPException: Error message on failure (422)
     """
-    result = await run_in_threadpool(service.predict, request)
-    return PredictResponse(has_errors=result)
+    result = service.predict(request)
+    return result
