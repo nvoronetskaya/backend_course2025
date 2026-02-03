@@ -1,4 +1,3 @@
-import routes.api as api
 from http import HTTPStatus
 import pytest
 
@@ -131,16 +130,16 @@ def test_images_qty_should_be_int(app_client, predict_request_builder, images_qt
 def test_server_error(app_client, predict_request_builder, monkeypatch):
     def predict_exception(request):
         raise Exception('Internal server error')
-    monkeypatch.setattr(api.service, 'predict', predict_exception)
+    monkeypatch.setattr(app_client.service, 'predict', predict_exception)
     prediction = app_client.post("/predict", json=predict_request_builder())
     assert prediction.status_code == HTTPStatus.INTERNAL_SERVER_ERROR
     assert "internal server error".lower() in prediction.text.lower()
 
 def test_model_unavailable_returns_503(app_client, predict_request_builder, monkeypatch):
-    monkeypatch.setattr(api.service, "model", None, raising=False)
+    monkeypatch.setattr(app_client.service, "model", None, raising=False)
 
     resp = app_client.post("/predict", json=predict_request_builder())
 
     assert resp.status_code == HTTPStatus.SERVICE_UNAVAILABLE
     body = resp.json()
-    assert "одель не загружена." in body["detail"].lower()
+    assert "модель не загружена." in body["detail"].lower()

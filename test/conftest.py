@@ -1,13 +1,46 @@
 from typing import Generator
 import pytest
 from fastapi.testclient import TestClient
-from routes.api import app
+from fastapi import FastAPI
 from model.request import PredictRequest
+from repository.local_model_repository import LocalModelRepository
+from service.model_service import ModelService
+from contextlib import asynccontextmanager
+import routes.api as api
+from routes.api import app
+from unittest.mock import patch
+
+@asynccontextmanager
+async def test_lifespan(app: FastAPI):
+    mock_repo = LocalModelRepository()
+    mock_service = ModelService(mock_repo)
+    mock_service.load_or_train_model()
+    app.state.service = mock_service
+    yield
+
+@pytest.fixture(scope="session")
+def test_app() -> FastAPI:
+    app = FastAPI(lifespan=test_lifespan)
+    from routes.api import get_prediction
+
+    @app.post("/predict")
+    async def predict(request: PredictRequest):
+        return await get_prediction(request)
+    
+    return app
 
 @pytest.fixture
-def app_client() -> Generator[TestClient, None, None]:
-    with TestClient(app, raise_server_exceptions=False) as client:
-        yield client
+def app_client(test_app) -> Generator[TestClient, None, None]:
+    mock_repo = LocalModelRepository()
+    mock_service = ModelService(mock_repo)
+    mock_service.load_or_train_model()
+    app.state.service = mock_service
+    api.service = mock_service
+    api.repository = mock_repo
+    with patch.object(api, 'mlflow'):
+        with TestClient(app) as client:
+            client.service = mock_service
+            yield client
 
 @pytest.fixture
 def predict_request_builder():
