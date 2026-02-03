@@ -1,12 +1,13 @@
 from typing import Generator
 import pytest
 from fastapi.testclient import TestClient
-from api import app
+from routes.api import app
 from model.request import PredictRequest
 
 @pytest.fixture
 def app_client() -> Generator[TestClient, None, None]:
-    return TestClient(app, raise_server_exceptions=False)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        yield client
 
 @pytest.fixture
 def predict_request_builder():

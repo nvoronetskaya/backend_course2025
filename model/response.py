@@ -7,4 +7,5 @@ class PredictResponse(BaseModel):
     Attributes:
         has_errors (bool): Determines whether the item ad has errors
     """
-    has_errors: bool
+    is_violation: bool
+    probability: float

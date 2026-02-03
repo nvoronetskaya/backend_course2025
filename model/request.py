@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 from typing import Annotated
 
 class PredictRequest(BaseModel):
@@ -17,10 +17,10 @@ class PredictRequest(BaseModel):
         images_qty (int): Number of images in the item ad
     """
 
-    seller_id: Annotated[int, Field(ge=0)]
+    seller_id: Annotated[StrictInt, Field(ge=0)]
     is_verified_seller: bool
-    item_id: Annotated[int, Field(ge=0)]
+    item_id: Annotated[StrictInt, Field(ge=0)]
     name: Annotated[str, Field(min_length=1)]
     description: Annotated[str, Field(min_length=1)]
-    category: Annotated[int, Field(ge=0)]
-    images_qty: Annotated[int, Field(ge=0)] 
+    category: Annotated[StrictInt, Field(ge=0)]
+    images_qty: Annotated[StrictInt, Field(ge=0)] 
