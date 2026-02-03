@@ -1,0 +1,36 @@
+services:
+  backend-project:
+    build: .
+    container_name: backend-project
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - USE_MLFLOW=true
+      - MLFLOW_HTTP_REQUEST_TIMEOUT=5
+      - MLFLOW_HTTP_REQUEST_MAX_RETRIES=1
+    depends_on:
+        mlflow:
+          condition: service_healthy
+    volumes:
+      - .:/backend_course2025
+  
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.9.0
+    container_name: mlflow
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --allowed-hosts 127.0.0.1:5000,localhost:5000,mlflow:5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlflow-data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000').read()"]
+      interval: 5s
+      timeout: 5s
+      retries: 50

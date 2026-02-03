@@ -1,21 +1,36 @@
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from model.request import PredictRequest
 from service.model_service import ModelService
-from repository.local_model_repository import LocalModelRepository
+from repository.mlflow_repository import MlflowModelRepository
 import logging
+import mlflow
+import os
+from starlette.concurrency import run_in_threadpool
 
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Setting up MLflow tracking")
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
+    os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
+    mlflow.sklearn.autolog(disable=True)
     try:
-        service.load_or_train_model()
-    except OSError:
-        logger.error('Failed to load model on service start')
+        await asyncio.wait_for(
+            run_in_threadpool(service.load_model),
+            timeout=5,
+        )
+    except (TimeoutError, RuntimeError):
+        logger.info('Model was not found in MLFlow. Training a new one')
+        await run_in_threadpool(service.train_model)
+    except Exception:
+        logger.exception('Failed to load model on service start')
     yield
 
-repository = LocalModelRepository()
+repository = MlflowModelRepository(MLFLOW_TRACKING_URI)
 service = ModelService(repository)
 app = FastAPI(lifespan=lifespan)
 
@@ -31,7 +46,7 @@ async def get_prediction(request: PredictRequest):
     """
     logger.info(f'Got new request: {request}.')
     try:
-        result = service.predict(request)
+        result = await run_in_threadpool(service.predict, request)
         logger.info(f'Response: {result}.')
         return result
     except FileNotFoundError as e:

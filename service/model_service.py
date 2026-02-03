@@ -15,6 +15,18 @@ class ModelService:
         model = self.model_repository.load_or_train_model()
         self.model = model
 
+    def load_model(self):
+        model = self.model_repository.load_model()
+        self.model = model
+    
+    def train_model(self):
+        model = self.model_repository.train_model()
+        self.model = model
+
+    def load_or_train_model(self):
+        model = self.model_repository.load_or_train_model()
+        self.model = model
+    
     def predict(self, request: PredictRequest):
         """
         Generate prediction. For now works without the model for prediction, uses naive approach

@@ -1,5 +1,5 @@
 class ModelRepository:
-    def train_model():
+    def train_model(self, path):
         """Обучает простую модель на синтетических данных."""
         pass
 

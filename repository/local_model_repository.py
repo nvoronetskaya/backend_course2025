@@ -5,7 +5,7 @@ from sklearn.linear_model import LogisticRegression
 import numpy as np
 
 class LocalModelRepository(ModelRepository):
-    def train_model(self):
+    def train_model(self, path=""):
         """Обучает простую модель на синтетических данных."""
         np.random.seed(42)
         # Признаки: [is_verified_seller, images_qty, description_length, category]
