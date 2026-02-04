@@ -1,6 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from dto.request import PredictRequest
 from service.model_service import ModelService
 from repository.model.mlflow_repository import MlflowModelRepository
@@ -9,39 +9,51 @@ import logging
 import mlflow
 import os
 from starlette.concurrency import run_in_threadpool
-from db.database import get_db
+from db.database import get_db, session_maker, engine, Base
+from db.tables import seller, item
+from utils import load_synthetic_data
 
+ML_MODEL = None
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 logger = logging.getLogger(__name__)
 
+model_repository = MlflowModelRepository(MLFLOW_TRACKING_URI)
+
+def get_service(db = Depends(get_db)):
+    return ModelService(item_repository=ItemRepository(db), model_repository=model_repository, model=ML_MODEL)
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global ML_MODEL
     logger.info("Setting up MLflow tracking")
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
     mlflow.sklearn.autolog(disable=True)
-    try:
-        await asyncio.wait_for(
-            run_in_threadpool(service.load_model),
-            timeout=5,
-        )
-    except (TimeoutError, RuntimeError):
-        logger.info('Model was not found in MLFlow. Training a new one')
-        await run_in_threadpool(service.train_model)
-    except Exception:
-        logger.exception('Failed to load model on service start')
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    async with session_maker() as db:
+        item_repo = ItemRepository(db)
+        await load_synthetic_data(item_repo)
+        service = ModelService(item_repository=item_repo, model_repository=model_repository)
+        try:
+            await asyncio.wait_for(
+                run_in_threadpool(service.load_model),
+                timeout=5,
+            )
+            logger.info("Model loaded successfully")
+            ML_MODEL = service.model
+        except (TimeoutError, RuntimeError, asyncio.TimeoutError):
+            logger.info('Model was not found in MLFlow or timeout. Training a new one')
+            await run_in_threadpool(service.train_model)
+            ML_MODEL = service.model
+        except Exception as e:
+            logger.exception(f'Failed to load model on service start: {e}')
     yield
 
-async def create_db():
-    return await get_db()
-
-item_repository = ItemRepository(db=create_db())
-model_repository = MlflowModelRepository(MLFLOW_TRACKING_URI)
-service = ModelService(model_repository=model_repository, item_repository=item_repository)
 app = FastAPI(lifespan=lifespan)
 
 @app.post("/predict")
-async def get_prediction(request: PredictRequest):
+async def get_prediction(request: PredictRequest, service = Depends(get_service)):
     """
     Get prediction
 
@@ -63,7 +75,7 @@ async def get_prediction(request: PredictRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/simple_predict/{item_id}")
-async def get_prediction(item_id: int):
+async def get_prediction(item_id: int, service = Depends(get_service)):
     """
     Get prediction
 
@@ -74,7 +86,7 @@ async def get_prediction(item_id: int):
     """
     logger.info(f'Got new prediciton request for item with id {item_id}.')
     try:
-        result = await run_in_threadpool(service.get_prediction_for_item, item_id)
+        result = await service.get_prediction_for_item(item_id)
         logger.info(f'Response: {result}.')
         return result
     except FileNotFoundError as e:

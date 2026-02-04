@@ -17,8 +17,8 @@ class PredictRequest(BaseModel):
         images_qty (int): Number of images in the item ad
     """
 
-    seller_id: Optional[Annotated[StrictInt, Field(ge=0)]]
-    is_verified_seller: Optional[bool]
+    seller_id: Optional[Annotated[StrictInt, Field(ge=0)]] = None
+    is_verified_seller: Optional[bool] = None
     item_id: Annotated[StrictInt, Field(ge=0)]
     name: Annotated[str, Field(min_length=1)]
     description: Annotated[str, Field(min_length=1)]

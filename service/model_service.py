@@ -7,10 +7,10 @@ class ModelService:
 
     This service handles model prediction
     """
-    def __init__(self, model_repository, item_repository):
+    def __init__(self, model_repository, item_repository, model=None):
         self.model_repository = model_repository
         self.item_repository = item_repository
-        self.model = None
+        self.model = model
     
     def load_or_train_model(self):
         model = self.model_repository.load_or_train_model()

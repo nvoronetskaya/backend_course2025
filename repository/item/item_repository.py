@@ -6,11 +6,12 @@ class ItemRepository:
         self.db = db
 
     async def get_item(self, id):
-        return await self.db.execute(select(DbItem).where(DbItem.id == id).limit(1))
+        result = await self.db.execute(select(DbItem).where(DbItem.id == id).limit(1))
+        return result.scalars().first()
 
     async def create_item(self, item):
         db_item = DbItem(
-            title = item.title,
+            name = item.name,
             description = item.description,
             category = item.category,
             images_qty = item.images_qty
@@ -18,5 +19,4 @@ class ItemRepository:
         self.db.add(db_item)
         await self.db.commit()
         await self.db.refresh(db_item)
-        item.id = db_item.id
         return item
