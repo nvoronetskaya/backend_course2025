@@ -1,5 +1,5 @@
 from pathlib import Path
-from repository.model_repository import ModelRepository
+from repository.model.model_repository import ModelRepository
 import pickle
 from sklearn.linear_model import LogisticRegression
 import numpy as np

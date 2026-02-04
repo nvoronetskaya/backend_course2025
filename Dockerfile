@@ -1,6 +1,7 @@
 FROM python:3.11-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /backend_course2025
 COPY requirements.txt .

@@ -1,5 +1,5 @@
-from model.request import PredictRequest
-from model.response import PredictResponse
+from dto.request import PredictRequest
+from dto.response import PredictResponse
 
 class ModelService:
     """
@@ -7,8 +7,9 @@ class ModelService:
 
     This service handles model prediction
     """
-    def __init__(self, model_repository):
+    def __init__(self, model_repository, item_repository):
         self.model_repository = model_repository
+        self.item_repository = item_repository
         self.model = None
     
     def load_or_train_model(self):
@@ -53,3 +54,14 @@ class ModelService:
         description = len(request.description) / 1000.0
         category = request.category / 100.0
         return [is_verified_float, images_qty, description, category]
+    
+    async def get_prediction_for_item(self, item_id):
+        item = await self.item_repository.get_item(item_id)
+        request = PredictRequest(
+            item_id = item.id,
+            name = item.name,
+            description = item.description,
+            category = item.category,
+            images_qty = item.images_qty
+        )
+        return self.predict(request)

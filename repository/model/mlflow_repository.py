@@ -1,6 +1,5 @@
 from pathlib import Path
-from repository.model_repository import ModelRepository
-import pickle
+from repository.model.model_repository import ModelRepository
 from sklearn.linear_model import LogisticRegression
 import logging
 import mlflow
@@ -11,9 +10,18 @@ import uuid
 logger = logging.getLogger(__name__)
 
 class MlflowModelRepository(ModelRepository):
-    def __init__(self, tracking_uri):
+    def __init__(self, tracking_uri, exp_name="my_name"):
         mlflow.set_tracking_uri(tracking_uri)
         self.mlflow_client = MlflowClient(tracking_uri)
+        self.mlflow_client = MlflowClient(tracking_uri)
+        exp = mlflow.get_experiment_by_name(exp_name)
+        if exp is None:
+            mlflow.create_experiment(exp_name)
+        else:
+            if exp.lifecycle_stage == "deleted":
+                self.mlflow_client.restore_experiment(exp.experiment_id)
+
+        mlflow.set_experiment(exp_name)
 
     def train_model(self, path="logreg"):
         """Обучает простую модель на синтетических данных."""

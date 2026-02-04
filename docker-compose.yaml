@@ -9,6 +9,11 @@ services:
       - USE_MLFLOW=true
       - MLFLOW_HTTP_REQUEST_TIMEOUT=5
       - MLFLOW_HTTP_REQUEST_MAX_RETRIES=1
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=postgres
     depends_on:
         mlflow:
           condition: service_healthy
@@ -34,3 +39,20 @@ services:
       interval: 5s
       timeout: 5s
       retries: 50
+  
+  db:
+    image: postgres:13
+    container_name: db
+    restart: always
+    environment:
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "postgres"
+      POSTGRES_DB: "postgres"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+volumes:
+  pgdata:
+  mlflow_data:

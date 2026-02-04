@@ -2,8 +2,8 @@ from typing import Generator
 import pytest
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
-from model.request import PredictRequest
-from repository.local_model_repository import LocalModelRepository
+from dto.request import PredictRequest
+from repository.model.local_model_repository import LocalModelRepository
 from service.model_service import ModelService
 from contextlib import asynccontextmanager
 import routes.api as api
