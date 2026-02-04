@@ -5,42 +5,44 @@ from fastapi import FastAPI
 from dto.request import PredictRequest
 from repository.model.local_model_repository import LocalModelRepository
 from service.model_service import ModelService
-from contextlib import asynccontextmanager
-import routes.api as api
-from routes.api import app
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock, AsyncMock
+from db.tables.item import Item
+import os
+import sys
 
-@asynccontextmanager
-async def test_lifespan(app: FastAPI):
-    mock_repo = LocalModelRepository()
-    mock_service = ModelService(mock_repo)
-    mock_service.load_or_train_model()
-    app.state.service = mock_service
-    yield
+os.environ["TESTING"] = "1"
+
+mock_mlflow = MagicMock()
+mock_mlflow.tracking = MagicMock()
+mock_mlflow.tracking.MlflowClient = MagicMock
+mock_mlflow.sklearn = MagicMock()
+sys.modules['mlflow'] = mock_mlflow
+sys.modules['mlflow.tracking'] = mock_mlflow.tracking
+sys.modules['mlflow.sklearn'] = mock_mlflow.sklearn
 
 @pytest.fixture(scope="session")
-def test_app() -> FastAPI:
-    app = FastAPI(lifespan=test_lifespan)
-    from routes.api import get_prediction
-
-    @app.post("/predict")
-    async def predict(request: PredictRequest):
-        return await get_prediction(request)
-    
-    return app
+def mock_service():
+    mock_repo = LocalModelRepository()
+    item_repo = MagicMock()
+    item = Item(
+        id = 1,
+        name="Wireless Earbuds X2",
+        description="Compact TWS earbuds with active noise reduction and 20h total playback.",
+        category=2,
+        images_qty=5,
+    )
+    item_repo.get_item.return_value = AsyncMock(item)
+    mock_service = ModelService(model_repository=mock_repo, item_repository=item_repo)
+    mock_service.load_or_train_model()
+    return mock_service
 
 @pytest.fixture
-def app_client(test_app) -> Generator[TestClient, None, None]:
-    mock_repo = LocalModelRepository()
-    mock_service = ModelService(mock_repo)
-    mock_service.load_or_train_model()
-    app.state.service = mock_service
-    api.service = mock_service
-    api.repository = mock_repo
-    with patch.object(api, 'mlflow'):
-        with TestClient(app) as client:
-            client.service = mock_service
-            yield client
+def app_client(mock_service) -> Generator[TestClient, None, None]:
+    from routes import api
+    api.app.dependency_overrides[api.get_service] = lambda: mock_service
+    with TestClient(api.app, raise_server_exceptions=False) as client:
+        client.service = mock_service
+        yield client
 
 @pytest.fixture
 def predict_request_builder():

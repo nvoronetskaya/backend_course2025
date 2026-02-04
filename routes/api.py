@@ -17,8 +17,6 @@ ML_MODEL = None
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 logger = logging.getLogger(__name__)
 
-model_repository = MlflowModelRepository(MLFLOW_TRACKING_URI)
-
 def get_service(db = Depends(get_db)):
     return ModelService(item_repository=ItemRepository(db), model_repository=model_repository, model=ML_MODEL)
 
@@ -50,7 +48,12 @@ async def lifespan(app: FastAPI):
             logger.exception(f'Failed to load model on service start: {e}')
     yield
 
-app = FastAPI(lifespan=lifespan)
+model_repository = MlflowModelRepository(MLFLOW_TRACKING_URI)
+
+if os.getenv("TESTING"):
+    app = FastAPI()
+else:
+    app = FastAPI(lifespan=lifespan)
 
 @app.post("/predict")
 async def get_prediction(request: PredictRequest, service = Depends(get_service)):
@@ -75,7 +78,7 @@ async def get_prediction(request: PredictRequest, service = Depends(get_service)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/simple_predict/{item_id}")
-async def get_prediction(item_id: int, service = Depends(get_service)):
+async def get_prediction_for_id(item_id: int, service = Depends(get_service)):
     """
     Get prediction
 
