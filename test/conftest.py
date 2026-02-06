@@ -9,6 +9,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 from db.tables.item import Item
 import os
 import sys
+import pytest_asyncio
 
 os.environ["TESTING"] = "1"
 
