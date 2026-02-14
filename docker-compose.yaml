@@ -14,9 +14,12 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - DB_NAME=postgres
+      - KAFKA_BOOTSTRAP=redpanda:29092
     depends_on:
         mlflow:
           condition: service_healthy
+        redpanda:
+          condition: service_started
     volumes:
       - .:/backend_course2025
   
@@ -39,7 +42,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 50
-  
   db:
     image: postgres:13
     container_name: db
@@ -53,6 +55,56 @@ services:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+  redpanda:
+    image: redpandadata/redpanda:latest
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp
+      - "1"
+      - --memory
+      - "1G"
+      - --reserve-memory
+      - "0M"
+      - --node-id
+      - "0"
+      - --check=false
+      - --kafka-addr
+      - PLAINTEXT://0.0.0.0:29092,OUTSIDE://0.0.0.0:9092
+      - --advertise-kafka-addr
+      - PLAINTEXT://redpanda:29092,OUTSIDE://localhost:9092
+    ports:
+      - "9092:9092"
+  console:
+    image: redpandadata/console:latest
+    environment:
+      KAFKA_BROKERS: redpanda:29092
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redpanda
+  moderation-worker:
+    build: .
+    command: python -m app.workers.moderation_worker
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=postgres
+      - KAFKA_BOOTSTRAP=redpanda:29092
+    depends_on:
+      mlflow:
+        condition: service_healthy
+      db:
+        condition: service_started
+      redpanda:
+        condition: service_started
+    volumes:
+      - .:/backend_course2025
+
 volumes:
   pgdata:
   mlflow_data:

@@ -7,9 +7,10 @@ class ModelService:
 
     This service handles model prediction
     """
-    def __init__(self, model_repository, item_repository, model=None):
+    def __init__(self, model_repository, item_repository, moderation_repository, model=None):
         self.model_repository = model_repository
         self.item_repository = item_repository
+        self.moderation_repository = moderation_repository
         self.model = model
     
     def load_or_train_model(self):
@@ -57,6 +58,8 @@ class ModelService:
     
     async def get_prediction_for_item(self, item_id):
         item = await self.item_repository.get_item(item_id)
+        if item is None:
+            return None
         request = PredictRequest(
             item_id = item.id,
             name = item.name,
@@ -65,3 +68,13 @@ class ModelService:
             images_qty = item.images_qty
         )
         return self.predict(request)
+
+    async def get_moderation_task_id_for_item(self, item_id):
+        item = await self.item_repository.get_item(item_id)
+        if item is None:
+            return None
+        task_id = await self.moderation_repository.create_moderation(item_id)
+        return task_id
+    
+    async def get_moderation_result(self, task_id):
+        return await self.moderation_repository.get_moderation(task_id)
