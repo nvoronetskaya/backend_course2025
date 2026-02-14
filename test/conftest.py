@@ -25,6 +25,7 @@ sys.modules['mlflow.sklearn'] = mock_mlflow.sklearn
 def mock_service():
     mock_repo = LocalModelRepository()
     item_repo = MagicMock()
+    moderation_repository = MagicMock()
     item = Item(
         id = 1,
         name="Wireless Earbuds X2",
@@ -33,7 +34,7 @@ def mock_service():
         images_qty=5,
     )
     item_repo.get_item.return_value = AsyncMock(item)
-    mock_service = ModelService(model_repository=mock_repo, item_repository=item_repo)
+    mock_service = ModelService(model_repository=mock_repo, item_repository=item_repo, moderation_repository=moderation_repository)
     mock_service.load_or_train_model()
     return mock_service
 

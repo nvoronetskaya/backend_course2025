@@ -109,6 +109,8 @@ async def get_prediction_for_id(item_id: int, service = Depends(get_service)):
     logger.info(f'Got new prediciton request for item with id {item_id}.')
     try:
         result = await service.get_prediction_for_item(item_id)
+        if result is None:
+            raise FileNotFoundError(0)
         logger.info(f'Response: {result}.')
         return result
     except FileNotFoundError as e:
