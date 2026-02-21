@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from dto.request import PredictRequest
 from dto.response import AsyncPredictResponse, ModerationResultResponse
 from service.model_service import ModelService
+from service.moderation_service import ModerationService
 from repository.model.mlflow_repository import MlflowModelRepository
 from repository.item.item_repository import ItemRepository
 from repository.moderation_result.moderation_result_repository import ModerationResultRepository
@@ -12,22 +13,29 @@ import mlflow
 import os
 from starlette.concurrency import run_in_threadpool
 from db.database import get_db, session_maker, engine, Base
-from db.tables import seller, item, moderation_result
 from utils import load_synthetic_data
 from app.clients.kafka import KafkaProducer
 from app.clients.settings import KAFKA_BOOTSTRAP
+from repository.moderation_result.moderation_redis_repository import ModerationRedisRepository
 
 ML_MODEL = None
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 logger = logging.getLogger(__name__)
 producer = KafkaProducer(KAFKA_BOOTSTRAP)
+redis_repo = ModerationRedisRepository()
 
-def get_service(db = Depends(get_db)):
+def get_model_service(db = Depends(get_db)):
     return ModelService(
         item_repository=ItemRepository(db), 
         model_repository=model_repository, 
-        moderation_repository=ModerationResultRepository(db),
         model=ML_MODEL
+    )
+
+def get_moderation_service(db = Depends(get_db)):
+    return ModerationService(
+        item_repo=ItemRepository(db), 
+        moder_repo=ModerationResultRepository(db),
+        redis_repo=redis_repo,
     )
 
 @asynccontextmanager
@@ -44,11 +52,9 @@ async def lifespan(app: FastAPI):
         async with session_maker() as db:
             item_repo = ItemRepository(db)
             await load_synthetic_data(item_repo)
-            moderation_repo = ModerationResultRepository(db)
             service = ModelService(
                 item_repository=item_repo, 
                 model_repository=model_repository,
-                moderation_repository=moderation_repo
             )
             try:
                 await asyncio.wait_for(
@@ -67,7 +73,6 @@ async def lifespan(app: FastAPI):
     finally:
         await producer.stop()
 
-
 model_repository = MlflowModelRepository(MLFLOW_TRACKING_URI)
 
 if os.getenv("TESTING"):
@@ -76,7 +81,7 @@ else:
     app = FastAPI(lifespan=lifespan)
 
 @app.post("/predict")
-async def get_prediction(request: PredictRequest, service = Depends(get_service)):
+async def get_prediction(request: PredictRequest, service = Depends(get_model_service)):
     """
     Get prediction
 
@@ -98,7 +103,7 @@ async def get_prediction(request: PredictRequest, service = Depends(get_service)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/simple_predict/{item_id}")
-async def get_prediction_for_id(item_id: int, service = Depends(get_service)):
+async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_service), moder_service = Depends(get_moderation_service)):
     """
     Get prediction
 
@@ -108,9 +113,18 @@ async def get_prediction_for_id(item_id: int, service = Depends(get_service)):
     """
     logger.info(f'Got new prediciton request for item with id {item_id}.')
     try:
-        result = await service.get_prediction_for_item(item_id)
+        result = await moder_service.get_prediction_for_item(item_id)
+        from_cache = result is not None
+        
         if result is None:
-            raise FileNotFoundError(0)
+            result = await model_service.get_prediction_for_item(item_id)
+        
+        if result is None:
+            raise FileNotFoundError(f"Item with id={item_id} not found")
+        
+        if not from_cache:
+            await moder_service.save_prediction_to_cache(item_id, result)
+        
         logger.info(f'Response: {result}.')
         return result
     except FileNotFoundError as e:
@@ -121,7 +135,7 @@ async def get_prediction_for_id(item_id: int, service = Depends(get_service)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/async_predict/{item_id}")
-async def get_async_prediction_for_id(item_id: int, service = Depends(get_service)):
+async def get_async_prediction_for_id(item_id: int, service = Depends(get_moderation_service)):
     """
     Create async moderation request for item
 
@@ -152,7 +166,7 @@ async def get_async_prediction_for_id(item_id: int, service = Depends(get_servic
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/moderation_result/{task_id}")
-async def get_moderation_result(task_id: int, service = Depends(get_service)):
+async def get_moderation_result(task_id: int, service = Depends(get_moderation_service)):
     """
     Get moderation result by task ID
 
@@ -165,6 +179,13 @@ async def get_moderation_result(task_id: int, service = Depends(get_service)):
         task = await service.get_moderation_result(task_id)
         if task is None:
             raise HTTPException(status_code=404, detail="Task with id is not found")
+        if isinstance(task, dict):
+            return ModerationResultResponse(
+                task_id=task["id"],
+                status=task["status"],
+                is_violation=task.get("is_violation"),
+                probability=task.get("probability")
+            )
         return ModerationResultResponse(
             task_id=task.id,
             status=task.status,
@@ -178,4 +199,28 @@ async def get_moderation_result(task_id: int, service = Depends(get_service)):
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/close/{item_id}")
+async def close_item(item_id: int, service = Depends(get_moderation_service)):
+    """
+    Close an item listing
+
+    Marks the item as closed and removes all associated moderation results
+    from both PostgreSQL and Redis cache.
+
+    Args: item_id (int): The item ID to close
+
+    Returns: dict with message and item_id on success (200)
+             HTTPException: 404 if item not found, 500 on error
+    """
+    try:
+        result = await service.close_item(item_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Item not found")
+        return {"message": "Item closed", "item_id": item_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'Error closing item {item_id}: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))

@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from dto.request import PredictRequest
 from repository.model.local_model_repository import LocalModelRepository
 from service.model_service import ModelService
+from service.moderation_service import ModerationService
 from unittest.mock import patch, MagicMock, AsyncMock
 from db.tables.item import Item
 import os
@@ -25,7 +26,6 @@ sys.modules['mlflow.sklearn'] = mock_mlflow.sklearn
 def mock_service():
     mock_repo = LocalModelRepository()
     item_repo = MagicMock()
-    moderation_repository = MagicMock()
     item = Item(
         id = 1,
         name="Wireless Earbuds X2",
@@ -34,16 +34,42 @@ def mock_service():
         images_qty=5,
     )
     item_repo.get_item.return_value = AsyncMock(item)
-    mock_service = ModelService(model_repository=mock_repo, item_repository=item_repo, moderation_repository=moderation_repository)
+    mock_service = ModelService(model_repository=mock_repo, item_repository=item_repo)
     mock_service.load_or_train_model()
     return mock_service
 
 @pytest.fixture
-def app_client(mock_service) -> Generator[TestClient, None, None]:
+def mock_moderation_service():
+    redis_repo = AsyncMock()
+    redis_repo.get_moderation_for_item = AsyncMock(return_value=None)
+    redis_repo.get_moderation = AsyncMock(return_value=None)
+    redis_repo.set_moderation = AsyncMock()
+    redis_repo.set_prediction_for_item = AsyncMock()
+    redis_repo.delete_for_item = AsyncMock()
+
+    moder_repo = AsyncMock()
+    moder_repo.get_moderation_for_item = AsyncMock(return_value=None)
+    moder_repo.get_moderation = AsyncMock(return_value=None)
+    moder_repo.delete_moderations_for_item = AsyncMock(return_value=[])
+
+    item_repo = AsyncMock()
+    item_repo.get_item = AsyncMock(return_value=None)
+    item_repo.close_item = AsyncMock(return_value=None)
+
+    return ModerationService(
+        moder_repo=moder_repo,
+        redis_repo=redis_repo,
+        item_repo=item_repo,
+    )
+
+@pytest.fixture
+def app_client(mock_service, mock_moderation_service) -> Generator[TestClient, None, None]:
     from routes import api
-    api.app.dependency_overrides[api.get_service] = lambda: mock_service
+    api.app.dependency_overrides[api.get_model_service] = lambda: mock_service
+    api.app.dependency_overrides[api.get_moderation_service] = lambda: mock_moderation_service
     with TestClient(api.app, raise_server_exceptions=False) as client:
         client.service = mock_service
+        client.moder_service = mock_moderation_service
         yield client
 
 @pytest.fixture

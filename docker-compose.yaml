@@ -15,10 +15,13 @@ services:
       - DB_PASSWORD=postgres
       - DB_NAME=postgres
       - KAFKA_BOOTSTRAP=redpanda:29092
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
         mlflow:
           condition: service_healthy
         redpanda:
+          condition: service_started
+        redis:
           condition: service_started
     volumes:
       - .:/backend_course2025
@@ -33,8 +36,8 @@ services:
       --backend-store-uri sqlite:////mlflow/mlflow.db
       --default-artifact-root /mlflow/artifacts
       --allowed-hosts 127.0.0.1:5000,localhost:5000,mlflow:5000
-    ports:
-      - "5000:5000"
+    expose:
+    - "5000"
     volumes:
       - ./mlflow-data:/mlflow
     healthcheck:
@@ -95,6 +98,7 @@ services:
       - DB_PASSWORD=postgres
       - DB_NAME=postgres
       - KAFKA_BOOTSTRAP=redpanda:29092
+      - REDIS_URL=redis://redis:6379/0
     depends_on:
       mlflow:
         condition: service_healthy
@@ -102,9 +106,22 @@ services:
         condition: service_started
       redpanda:
         condition: service_started
+      redis:
+        condition: service_started
     volumes:
       - .:/backend_course2025
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    environment:
+      - REDIS_PORT=6379
+      - REDIS_DATABASES=1
 
 volumes:
   pgdata:
   mlflow_data:
+  redis_data:

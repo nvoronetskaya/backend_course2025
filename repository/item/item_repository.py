@@ -20,3 +20,12 @@ class ItemRepository:
         await self.db.commit()
         await self.db.refresh(db_item)
         return item
+
+    async def close_item(self, item_id):
+        item = await self.get_item(item_id)
+        if item is None:
+            return None
+        item.is_closed = True
+        await self.db.commit()
+        await self.db.refresh(item)
+        return item

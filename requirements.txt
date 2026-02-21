@@ -2,10 +2,14 @@ fastapi
 uvicorn[standard]
 pydantic
 pytest
+pytest-asyncio
 scikit-learn
-numpy
+numpy<2.0
 mlflow
 asyncpg
 psycopg2-binary
-yandex-pgmigrate
+# yandex-pgmigrate
 aiokafka
+redis>=5.0.0
+fakeredis[lua]
+aiosqlite

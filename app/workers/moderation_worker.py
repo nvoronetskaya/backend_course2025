@@ -212,7 +212,6 @@ async def handle_moderation(db, item_id: int, model, model_repo):
     service = ModelService(
         item_repository=item_repo,
         model_repository=model_repo,
-        moderation_repository=moder_repo,
         model=model
     )
     result = service.predict(prediction_request)

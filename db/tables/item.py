@@ -1,5 +1,5 @@
 from db.database import Base
-from sqlalchemy import Column, Integer, String, Text
+from sqlalchemy import Column, Integer, String, Text, Boolean
 
 class Item(Base):
     __tablename__ = "items"
@@ -8,3 +8,4 @@ class Item(Base):
     description = Column(Text, nullable=False)
     images_qty = Column(Integer, nullable=False)
     category = Column(Integer, nullable=False)
+    is_closed = Column(Boolean, nullable=False, default=False, server_default="false")

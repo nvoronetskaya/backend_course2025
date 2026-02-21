@@ -1,4 +1,4 @@
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from datetime import datetime, timezone
 from db.tables.moderation_result import ModerationResult
 
@@ -10,6 +10,10 @@ class ModerationResultRepository:
         result = await self.db.execute(select(ModerationResult).where(ModerationResult.id == id).limit(1))
         return result.scalars().first()
 
+    async def get_moderation_for_item(self, item_id):
+        result = await self.db.execute(select(ModerationResult).where(ModerationResult.item_id == item_id).limit(1))
+        return result.scalars().first()
+
     async def create_moderation(self, item_id):
         db_moderation = ModerationResult(
             item_id=item_id,
@@ -19,7 +23,7 @@ class ModerationResultRepository:
         self.db.add(db_moderation)
         await self.db.commit()
         await self.db.refresh(db_moderation)
-        return db_moderation.id
+        return db_moderation
     
     async def get_latest_pending(self, db, item_id):
         res = await db.execute(
@@ -59,3 +63,15 @@ class ModerationResultRepository:
         obj.retry_count += 1
         await db.commit()
         return obj.retry_count
+
+    async def delete_moderations_for_item(self, item_id):
+        result = await self.db.execute(
+            select(ModerationResult.id).where(ModerationResult.item_id == item_id)
+        )
+        task_ids = [row[0] for row in result.all()]
+        if task_ids:
+            await self.db.execute(
+                delete(ModerationResult).where(ModerationResult.item_id == item_id)
+            )
+            await self.db.commit()
+        return task_ids
