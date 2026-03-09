@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
 
@@ -11,6 +12,12 @@ from repository.moderation_result.moderation_result_repository import Moderation
 from repository.model.mlflow_repository import MlflowModelRepository
 from service.model_service import ModelService
 from dto.request import PredictRequest
+from app.metrics import (
+    PREDICTIONS_TOTAL,
+    PREDICTION_DURATION,
+    PREDICTION_ERRORS_TOTAL,
+    MODEL_PREDICTION_PROBABILITY,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -86,6 +93,7 @@ async def main():
                 await consumer.commit()
                 
             except PermanentError as e:
+                PREDICTION_ERRORS_TOTAL.labels(error_type="permanent").inc()
                 logger.error(f"Permanent error processing message: {e}")
                 try:
                     async with session_maker() as db:
@@ -107,6 +115,7 @@ async def main():
                 await consumer.commit()
                 
             except Exception as e:
+                PREDICTION_ERRORS_TOTAL.labels(error_type="unhandled").inc()
                 try:
                     async with session_maker() as db:
                         await mark_moderation_failed(
@@ -154,6 +163,7 @@ async def process_with_retry(item_id: int, model, model_repo, dlq_producer, orig
                 raise PermanentError(str(e)) from e
             
             if retry_count >= MAX_RETRIES:
+                PREDICTION_ERRORS_TOTAL.labels(error_type="max_retries_exceeded").inc()
                 logger.error(f"Max retries ({MAX_RETRIES}) exceeded for item_id={item_id}")
                 break
             try:
@@ -201,6 +211,7 @@ async def handle_moderation(db, item_id: int, model, model_repo):
     if task is None:
         return
     if model is None:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="model_not_available").inc()
         raise RetryableError("ML model is not available")
     prediction_request = PredictRequest(
         item_id=item.id,
@@ -214,7 +225,11 @@ async def handle_moderation(db, item_id: int, model, model_repo):
         model_repository=model_repo,
         model=model
     )
+    start = time.perf_counter()
     result = service.predict(prediction_request)
+    PREDICTION_DURATION.observe(time.perf_counter() - start)
+    PREDICTIONS_TOTAL.labels(result="violation" if result.is_violation else "no_violation").inc()
+    MODEL_PREDICTION_PROBABILITY.observe(result.probability)
     await moder_repo.update_task(
         db=db,
         task_id=task.id,

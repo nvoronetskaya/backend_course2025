@@ -1,17 +1,23 @@
+import time
 from sqlalchemy import select, delete
 from datetime import datetime, timezone
 from db.tables.moderation_result import ModerationResult
+from app.metrics import DB_QUERY_DURATION
 
 class ModerationResultRepository:
     def __init__(self, db):
         self.db = db
 
     async def get_moderation(self, id):
+        start = time.perf_counter()
         result = await self.db.execute(select(ModerationResult).where(ModerationResult.id == id).limit(1))
+        DB_QUERY_DURATION.labels(query_type="select_moderation").observe(time.perf_counter() - start)
         return result.scalars().first()
 
     async def get_moderation_for_item(self, item_id):
+        start = time.perf_counter()
         result = await self.db.execute(select(ModerationResult).where(ModerationResult.item_id == item_id).limit(1))
+        DB_QUERY_DURATION.labels(query_type="select_moderation_by_item").observe(time.perf_counter() - start)
         return result.scalars().first()
 
     async def create_moderation(self, item_id):
@@ -21,7 +27,9 @@ class ModerationResultRepository:
             retry_count=0
         )
         self.db.add(db_moderation)
+        start = time.perf_counter()
         await self.db.commit()
+        DB_QUERY_DURATION.labels(query_type="insert_moderation").observe(time.perf_counter() - start)
         await self.db.refresh(db_moderation)
         return db_moderation
     

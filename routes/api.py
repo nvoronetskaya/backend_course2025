@@ -17,6 +17,16 @@ from utils import load_synthetic_data
 from app.clients.kafka import KafkaProducer
 from app.clients.settings import KAFKA_BOOTSTRAP
 from repository.moderation_result.moderation_redis_repository import ModerationRedisRepository
+from app.clients.middleware import PrometheusMiddleware, generate_latest, CONTENT_TYPE_LATEST
+from app.metrics import (
+    PREDICTIONS_TOTAL,
+    PREDICTION_DURATION,
+    PREDICTION_ERRORS_TOTAL,
+    DB_QUERY_DURATION,
+    MODEL_PREDICTION_PROBABILITY,
+)
+from fastapi import Response
+import time
 
 ML_MODEL = None
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
@@ -91,14 +101,20 @@ async def get_prediction(request: PredictRequest, service = Depends(get_model_se
              HTTPException: Error message on failure (422)
     """
     logger.info(f'Got new request: {request}.')
+    start = time.perf_counter()
     try:
         result = await run_in_threadpool(service.predict, request)
+        PREDICTION_DURATION.observe(time.perf_counter() - start)
+        PREDICTIONS_TOTAL.labels(result="violation" if result.is_violation else "no_violation").inc()
+        MODEL_PREDICTION_PROBABILITY.observe(result.probability)
         logger.info(f'Response: {result}.')
         return result
     except FileNotFoundError as e:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="model_not_found").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="internal").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -117,7 +133,10 @@ async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_
         from_cache = result is not None
         
         if result is None:
+            start = time.perf_counter()
             result = await model_service.get_prediction_for_item(item_id)
+            if result is not None:
+                PREDICTION_DURATION.observe(time.perf_counter() - start)
         
         if result is None:
             raise FileNotFoundError(f"Item with id={item_id} not found")
@@ -125,12 +144,19 @@ async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_
         if not from_cache:
             await moder_service.save_prediction_to_cache(item_id, result)
         
+        is_violation = result.get("is_violation") if isinstance(result, dict) else result.is_violation
+        probability = result.get("probability") if isinstance(result, dict) else result.probability
+        PREDICTIONS_TOTAL.labels(result="violation" if is_violation else "no_violation").inc()
+        if probability is not None:
+            MODEL_PREDICTION_PROBABILITY.observe(probability)
         logger.info(f'Response: {result}.')
         return result
     except FileNotFoundError as e:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="item_not_found").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="internal").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -157,11 +183,14 @@ async def get_async_prediction_for_id(item_id: int, service = Depends(get_modera
             message="Moderation request accepted"
         )
     except HTTPException:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="item_not_found").inc()
         raise
     except FileNotFoundError as e:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="model_not_found").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="internal").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -180,12 +209,17 @@ async def get_moderation_result(task_id: int, service = Depends(get_moderation_s
         if task is None:
             raise HTTPException(status_code=404, detail="Task with id is not found")
         if isinstance(task, dict):
+            prob = task.get("probability")
+            if prob is not None:
+                MODEL_PREDICTION_PROBABILITY.observe(prob)
             return ModerationResultResponse(
                 task_id=task["id"],
                 status=task["status"],
                 is_violation=task.get("is_violation"),
-                probability=task.get("probability")
+                probability=prob
             )
+        if task.probability is not None:
+            MODEL_PREDICTION_PROBABILITY.observe(task.probability)
         return ModerationResultResponse(
             task_id=task.id,
             status=task.status,
@@ -195,9 +229,11 @@ async def get_moderation_result(task_id: int, service = Depends(get_moderation_s
     except HTTPException:
         raise
     except FileNotFoundError as e:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="task_not_found").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
+        PREDICTION_ERRORS_TOTAL.labels(error_type="internal").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -224,3 +260,9 @@ async def close_item(item_id: int, service = Depends(get_moderation_service)):
     except Exception as e:
         logger.error(f'Error closing item {item_id}: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
+
+app.add_middleware(PrometheusMiddleware)
+
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
