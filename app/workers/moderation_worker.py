@@ -1,9 +1,11 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+import sentry_sdk
 
 from .settings import KAFKA_BOOTSTRAP, TOPIC, DLQ_TOPIC, CONSUMER_GROUP, MLFLOW_TRACKING_URI
 from db.database import session_maker
@@ -18,6 +20,7 @@ from app.metrics import (
     PREDICTION_ERRORS_TOTAL,
     MODEL_PREDICTION_PROBABILITY,
 )
+from app.exceptions import ModelIsNotAvailable, AdvertisementNotFoundError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -35,7 +38,7 @@ class PermanentError(Exception):
 
 
 def is_retryable_error(error: Exception) -> bool:
-    if isinstance(error, (RetryableError, RuntimeError, ConnectionError, TimeoutError)):
+    if isinstance(error, (RetryableError, ModelIsNotAvailable, RuntimeError, ConnectionError, TimeoutError)):
         return True
     return False
 
@@ -44,6 +47,13 @@ def calculate_retry_delay(retry_count: int) -> int:
     return RETRY_DELAY * (2 ** retry_count)
 
 async def main():
+    sentry_sdk.init(
+        # Тут должен быть ключ от Sentry
+        dsn=os.getenv("SENTRY_DSN", ""),
+        traces_sample_rate=1.0,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "development"),
+    )
+
     consumer = AIOKafkaConsumer(
         TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP,
@@ -93,6 +103,7 @@ async def main():
                 await consumer.commit()
                 
             except PermanentError as e:
+                sentry_sdk.capture_exception(e)
                 PREDICTION_ERRORS_TOTAL.labels(error_type="permanent").inc()
                 logger.error(f"Permanent error processing message: {e}")
                 try:
@@ -115,6 +126,7 @@ async def main():
                 await consumer.commit()
                 
             except Exception as e:
+                sentry_sdk.capture_exception(e)
                 PREDICTION_ERRORS_TOTAL.labels(error_type="unhandled").inc()
                 try:
                     async with session_maker() as db:
@@ -157,12 +169,15 @@ async def process_with_retry(item_id: int, model, model_repo, dlq_producer, orig
             
             return
             
+        except AdvertisementNotFoundError as e:
+            raise PermanentError(str(e)) from e
         except Exception as e:
             last_error = e
             if not is_retryable_error(e):
                 raise PermanentError(str(e)) from e
             
             if retry_count >= MAX_RETRIES:
+                sentry_sdk.capture_exception(e)
                 PREDICTION_ERRORS_TOTAL.labels(error_type="max_retries_exceeded").inc()
                 logger.error(f"Max retries ({MAX_RETRIES}) exceeded for item_id={item_id}")
                 break
@@ -205,14 +220,14 @@ async def handle_moderation(db, item_id: int, model, model_repo):
     
     item = await item_repo.get_item(item_id)
     if item is None:
-        raise PermanentError(f"Item with id={item_id} not found in database")
+        raise AdvertisementNotFoundError(f"Item with id={item_id} not found in database")
     
     task = await moder_repo.get_latest_pending(db, item_id)
     if task is None:
         return
     if model is None:
         PREDICTION_ERRORS_TOTAL.labels(error_type="model_not_available").inc()
-        raise RetryableError("ML model is not available")
+        raise ModelIsNotAvailable("ML model is not available")
     prediction_request = PredictRequest(
         item_id=item.id,
         name=item.name,

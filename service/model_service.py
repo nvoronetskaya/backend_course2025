@@ -1,5 +1,6 @@
 from dto.request import PredictRequest
 from dto.response import PredictResponse
+from app.exceptions import ModelIsNotAvailable, ErrorInPrediction, AdvertisementNotFoundError
 
 class ModelService:
     """
@@ -39,9 +40,14 @@ class ModelService:
             bool: If an item ad has errors
         """
         if self.model is None:
-            raise FileNotFoundError('Модель не загружена.')
-        model_input = self.prepare_features(request)
-        probas = self.model_repository.predict(input=model_input, model=self.model)
+            raise ModelIsNotAvailable('Модель не загружена.')
+        try:
+            model_input = self.prepare_features(request)
+            probas = self.model_repository.predict(input=model_input, model=self.model)
+        except ModelIsNotAvailable:
+            raise
+        except Exception as e:
+            raise ErrorInPrediction(f"Ошибка при выполнении предсказания: {e}") from e
 
         return PredictResponse(
             is_violation=probas[1] > probas[0],
@@ -58,7 +64,7 @@ class ModelService:
     async def get_prediction_for_item(self, item_id):
         item = await self.item_repository.get_item(item_id)
         if item is None:
-            return None
+            raise AdvertisementNotFoundError(f"Item with id={item_id} not found")
         request = PredictRequest(
             item_id = item.id,
             name = item.name,

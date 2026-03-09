@@ -11,6 +11,7 @@ from repository.moderation_result.moderation_result_repository import Moderation
 import logging
 import mlflow
 import os
+import sentry_sdk
 from starlette.concurrency import run_in_threadpool
 from db.database import get_db, session_maker, engine, Base
 from utils import load_synthetic_data
@@ -25,6 +26,7 @@ from app.metrics import (
     DB_QUERY_DURATION,
     MODEL_PREDICTION_PROBABILITY,
 )
+from app.exceptions import ModelIsNotAvailable, ErrorInPrediction, AdvertisementNotFoundError
 from fastapi import Response
 import time
 
@@ -51,6 +53,12 @@ def get_moderation_service(db = Depends(get_db)):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global ML_MODEL
+    sentry_sdk.init(
+        # Тут должен быть ключ от Sentry
+        dsn=os.getenv("SENTRY_DSN", ""),
+        traces_sample_rate=1.0,
+        environment=os.getenv("SENTRY_ENVIRONMENT", "dev"),
+    )
     logger.info("Setting up MLflow tracking")
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     os.environ["MLFLOW_TRACKING_INSECURE_TLS"] = "true"
@@ -109,11 +117,18 @@ async def get_prediction(request: PredictRequest, service = Depends(get_model_se
         MODEL_PREDICTION_PROBABILITY.observe(result.probability)
         logger.info(f'Response: {result}.')
         return result
-    except FileNotFoundError as e:
+    except ModelIsNotAvailable as e:
+        sentry_sdk.capture_exception(e)
         PREDICTION_ERRORS_TOTAL.labels(error_type="model_not_found").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=503, detail=str(e))
+    except ErrorInPrediction as e:
+        sentry_sdk.capture_exception(e)
+        PREDICTION_ERRORS_TOTAL.labels(error_type="prediction_error").inc()
+        logger.error(f'Got exception during prediction. Details: {str(e)}.')
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         PREDICTION_ERRORS_TOTAL.labels(error_type="internal").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
@@ -139,7 +154,7 @@ async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_
                 PREDICTION_DURATION.observe(time.perf_counter() - start)
         
         if result is None:
-            raise FileNotFoundError(f"Item with id={item_id} not found")
+            raise AdvertisementNotFoundError(f"Item with id={item_id} not found")
         
         if not from_cache:
             await moder_service.save_prediction_to_cache(item_id, result)
@@ -151,11 +166,23 @@ async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_
             MODEL_PREDICTION_PROBABILITY.observe(probability)
         logger.info(f'Response: {result}.')
         return result
-    except FileNotFoundError as e:
+    except AdvertisementNotFoundError as e:
+        sentry_sdk.capture_exception(e)
         PREDICTION_ERRORS_TOTAL.labels(error_type="item_not_found").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
+        raise HTTPException(status_code=404, detail=str(e))
+    except ModelIsNotAvailable as e:
+        sentry_sdk.capture_exception(e)
+        PREDICTION_ERRORS_TOTAL.labels(error_type="model_not_found").inc()
+        logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=503, detail=str(e))
+    except ErrorInPrediction as e:
+        sentry_sdk.capture_exception(e)
+        PREDICTION_ERRORS_TOTAL.labels(error_type="prediction_error").inc()
+        logger.error(f'Got exception during prediction. Details: {str(e)}.')
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         PREDICTION_ERRORS_TOTAL.labels(error_type="internal").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
@@ -185,11 +212,13 @@ async def get_async_prediction_for_id(item_id: int, service = Depends(get_modera
     except HTTPException:
         PREDICTION_ERRORS_TOTAL.labels(error_type="item_not_found").inc()
         raise
-    except FileNotFoundError as e:
-        PREDICTION_ERRORS_TOTAL.labels(error_type="model_not_found").inc()
+    except AdvertisementNotFoundError as e:
+        sentry_sdk.capture_exception(e)
+        PREDICTION_ERRORS_TOTAL.labels(error_type="item_not_found").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         PREDICTION_ERRORS_TOTAL.labels(error_type="internal").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
@@ -228,11 +257,8 @@ async def get_moderation_result(task_id: int, service = Depends(get_moderation_s
         )
     except HTTPException:
         raise
-    except FileNotFoundError as e:
-        PREDICTION_ERRORS_TOTAL.labels(error_type="task_not_found").inc()
-        logger.error(f'Got exception during prediction. Details: {str(e)}.')
-        raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         PREDICTION_ERRORS_TOTAL.labels(error_type="internal").inc()
         logger.error(f'Got exception during prediction. Details: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
@@ -258,6 +284,7 @@ async def close_item(item_id: int, service = Depends(get_moderation_service)):
     except HTTPException:
         raise
     except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.error(f'Error closing item {item_id}: {str(e)}.')
         raise HTTPException(status_code=500, detail=str(e))
 

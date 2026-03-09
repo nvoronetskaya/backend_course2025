@@ -16,6 +16,8 @@ services:
       - DB_NAME=postgres
       - KAFKA_BOOTSTRAP=redpanda:29092
       - REDIS_URL=redis://redis:6379/0
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-dev}
     depends_on:
         mlflow:
           condition: service_healthy
@@ -99,6 +101,8 @@ services:
       - DB_NAME=postgres
       - KAFKA_BOOTSTRAP=redpanda:29092
       - REDIS_URL=redis://redis:6379/0
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-dev}
     depends_on:
       mlflow:
         condition: service_healthy
