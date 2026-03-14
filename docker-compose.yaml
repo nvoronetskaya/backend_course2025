@@ -59,7 +59,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5435:5432"
   redpanda:
     image: redpandadata/redpanda:latest
     command:

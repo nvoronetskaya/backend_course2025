@@ -1,13 +1,17 @@
 import asyncio
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 from dto.request import PredictRequest
+from dto.auth import LoginRequest
 from dto.response import AsyncPredictResponse, ModerationResultResponse
 from service.model_service import ModelService
 from service.moderation_service import ModerationService
+from service.auth_service import AuthService
 from repository.model.mlflow_repository import MlflowModelRepository
 from repository.item.item_repository import ItemRepository
 from repository.moderation_result.moderation_result_repository import ModerationResultRepository
+from repository.account.account_repository import AccountRepository
 import logging
 import mlflow
 import os
@@ -26,12 +30,20 @@ from app.metrics import (
     DB_QUERY_DURATION,
     MODEL_PREDICTION_PROBABILITY,
 )
-from app.exceptions import ModelIsNotAvailable, ErrorInPrediction, AdvertisementNotFoundError
+from app.exceptions import (
+    ModelIsNotAvailable,
+    ErrorInPrediction,
+    AdvertisementNotFoundError,
+    InvalidCredentialsError,
+    AccountBlockedError,
+    InvalidTokenError,
+)
 from fastapi import Response
 import time
 
 ML_MODEL = None
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+JWT_SECRET = os.getenv("JWT_SECRET", "secret-key")
 logger = logging.getLogger(__name__)
 producer = KafkaProducer(KAFKA_BOOTSTRAP)
 redis_repo = ModerationRedisRepository()
@@ -49,6 +61,25 @@ def get_moderation_service(db = Depends(get_db)):
         moder_repo=ModerationResultRepository(db),
         redis_repo=redis_repo,
     )
+
+def get_auth_service(db = Depends(get_db)):
+    return AuthService(account_repo=AccountRepository(db), secret_key=JWT_SECRET)
+
+async def get_current_account(request: Request, db = Depends(get_db)):
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    auth = AuthService(account_repo=None, secret_key=JWT_SECRET)
+    try:
+        payload = auth.verify_token(token)
+    except InvalidTokenError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    account = await AccountRepository(db).get_by_id(payload["sub"])
+    if account is None:
+        raise HTTPException(status_code=403, detail="Account not found")
+    if account.is_blocked:
+        raise HTTPException(status_code=403, detail="Account is blocked")
+    return account
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -98,8 +129,20 @@ if os.getenv("TESTING"):
 else:
     app = FastAPI(lifespan=lifespan)
 
+@app.post("/login")
+async def login(body: LoginRequest, auth_service = Depends(get_auth_service)):
+    try:
+        token = await auth_service.authenticate(body.login, body.password)
+        response = JSONResponse(content={"message": "Login successful"})
+        response.set_cookie(key="access_token", value=token, httponly=True)
+        return response
+    except InvalidCredentialsError:
+        raise HTTPException(status_code=401, detail="Invalid login or password")
+    except AccountBlockedError:
+        raise HTTPException(status_code=403, detail="Account is blocked")
+
 @app.post("/predict")
-async def get_prediction(request: PredictRequest, service = Depends(get_model_service)):
+async def get_prediction(request: PredictRequest, service = Depends(get_model_service), account = Depends(get_current_account)):
     """
     Get prediction
 
@@ -134,7 +177,7 @@ async def get_prediction(request: PredictRequest, service = Depends(get_model_se
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/simple_predict/{item_id}")
-async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_service), moder_service = Depends(get_moderation_service)):
+async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_service), moder_service = Depends(get_moderation_service), account = Depends(get_current_account)):
     """
     Get prediction
 
@@ -188,7 +231,7 @@ async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/async_predict/{item_id}")
-async def get_async_prediction_for_id(item_id: int, service = Depends(get_moderation_service)):
+async def get_async_prediction_for_id(item_id: int, service = Depends(get_moderation_service), account = Depends(get_current_account)):
     """
     Create async moderation request for item
 
@@ -224,7 +267,7 @@ async def get_async_prediction_for_id(item_id: int, service = Depends(get_modera
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/moderation_result/{task_id}")
-async def get_moderation_result(task_id: int, service = Depends(get_moderation_service)):
+async def get_moderation_result(task_id: int, service = Depends(get_moderation_service), account = Depends(get_current_account)):
     """
     Get moderation result by task ID
 
@@ -264,7 +307,7 @@ async def get_moderation_result(task_id: int, service = Depends(get_moderation_s
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/close/{item_id}")
-async def close_item(item_id: int, service = Depends(get_moderation_service)):
+async def close_item(item_id: int, service = Depends(get_moderation_service), account = Depends(get_current_account)):
     """
     Close an item listing
 

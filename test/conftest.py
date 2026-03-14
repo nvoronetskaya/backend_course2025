@@ -63,10 +63,20 @@ def mock_moderation_service():
     )
 
 @pytest.fixture
-def app_client(mock_service, mock_moderation_service) -> Generator[TestClient, None, None]:
+def mock_account():
+    account = MagicMock()
+    account.id = 1
+    account.login = "test"
+    account.password = "test"
+    account.is_blocked = False
+    return account
+
+@pytest.fixture
+def app_client(mock_service, mock_moderation_service, mock_account) -> Generator[TestClient, None, None]:
     from routes import api
     api.app.dependency_overrides[api.get_model_service] = lambda: mock_service
     api.app.dependency_overrides[api.get_moderation_service] = lambda: mock_moderation_service
+    api.app.dependency_overrides[api.get_current_account] = lambda: mock_account
     with TestClient(api.app, raise_server_exceptions=False) as client:
         client.service = mock_service
         client.moder_service = mock_moderation_service
