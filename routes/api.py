@@ -187,20 +187,9 @@ async def get_prediction_for_id(item_id: int, model_service = Depends(get_model_
     """
     logger.info(f'Got new prediciton request for item with id {item_id}.')
     try:
-        result = await moder_service.get_prediction_for_item(item_id)
-        from_cache = result is not None
-        
-        if result is None:
-            start = time.perf_counter()
-            result = await model_service.get_prediction_for_item(item_id)
-            if result is not None:
-                PREDICTION_DURATION.observe(time.perf_counter() - start)
-        
+        result = await moder_service.get_or_predict_for_item(item_id, model_service)
         if result is None:
             raise AdvertisementNotFoundError(f"Item with id={item_id} not found")
-        
-        if not from_cache:
-            await moder_service.save_prediction_to_cache(item_id, result)
         
         is_violation = result.get("is_violation") if isinstance(result, dict) else result.is_violation
         probability = result.get("probability") if isinstance(result, dict) else result.probability

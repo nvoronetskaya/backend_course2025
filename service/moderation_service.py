@@ -40,6 +40,15 @@ class ModerationService:
             await self.redis_repo.set_moderation(task_id, result)
         return result
     
+    async def get_or_predict_for_item(self, item_id, model_service):
+        cached = await self.get_prediction_for_item(item_id)
+        if cached is not None:
+            return cached
+        result = await model_service.get_prediction_for_item(item_id)
+        if result is not None:
+            await self.save_prediction_to_cache(item_id, result)
+        return result
+
     async def save_prediction_to_cache(self, item_id, result):
         if result is not None:
             if hasattr(result, 'id') and hasattr(result, 'item_id'):
