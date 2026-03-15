@@ -5,8 +5,14 @@ from db.tables.moderation_result import ModerationResult
 from app.metrics import DB_QUERY_DURATION
 
 class ModerationResultRepository:
-    def __init__(self, db):
+    def __init__(self, db, redis_repo=None):
         self.db = db
+        self.redis_repo = redis_repo
+
+    def is_completed(self, result):
+        if isinstance(result, dict):
+            return result.get("status") == "completed"
+        return getattr(result, "status", None) == "completed"
 
     async def get_moderation(self, id):
         start = time.perf_counter()
@@ -82,4 +88,47 @@ class ModerationResultRepository:
                 delete(ModerationResult).where(ModerationResult.item_id == item_id)
             )
             await self.db.commit()
+        return task_ids
+
+    async def get_completed_for_item(self, item_id):
+        if self.redis_repo is not None:
+            cached = await self.redis_repo.get_moderation_for_item(item_id)
+            if cached is not None and self.is_completed(cached):
+                return cached
+        result = await self.get_moderation_for_item(item_id)
+        if result is not None and self.is_completed(result):
+            return result
+        return None
+
+    async def get_result(self, task_id):
+        if self.redis_repo is not None:
+            cached = await self.redis_repo.get_moderation(task_id)
+            if cached is not None:
+                status = cached.get("status") if isinstance(cached, dict) else getattr(cached, "status", None)
+                if status not in (None, "pending"):
+                    return cached
+
+        result = await self.get_moderation(task_id)
+        if result is not None and self.redis_repo is not None:
+            await self.redis_repo.set_moderation(task_id, result)
+        return result
+
+    async def create_and_cache(self, item_id):
+        task = await self.create_moderation(item_id)
+        if self.redis_repo is not None:
+            await self.redis_repo.set_moderation(task.id, task)
+        return task
+
+    async def save_to_cache(self, item_id, result):
+        if result is None or self.redis_repo is None:
+            return
+        if hasattr(result, 'id') and hasattr(result, 'item_id'):
+            await self.redis_repo.set_moderation(result.id, result)
+        else:
+            await self.redis_repo.set_prediction_for_item(item_id, result)
+
+    async def delete_for_item(self, item_id):
+        task_ids = await self.delete_moderations_for_item(item_id)
+        if self.redis_repo is not None:
+            await self.redis_repo.delete_for_item(item_id, task_ids)
         return task_ids

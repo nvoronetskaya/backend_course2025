@@ -57,9 +57,8 @@ def get_model_service(db = Depends(get_db)):
 
 def get_moderation_service(db = Depends(get_db)):
     return ModerationService(
-        item_repo=ItemRepository(db), 
-        moder_repo=ModerationResultRepository(db),
-        redis_repo=redis_repo,
+        item_repo=ItemRepository(db),
+        moder_repo=ModerationResultRepository(db, redis_repo),
     )
 
 def get_auth_service(db = Depends(get_db)):

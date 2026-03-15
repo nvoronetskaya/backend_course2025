@@ -11,7 +11,6 @@ async def test_close_item_success(app_client):
     app_client.moder_service.item_repo.get_item = AsyncMock(return_value=item)
     app_client.moder_service.item_repo.close_item = AsyncMock(return_value=item)
     app_client.moder_service.moder_repo.delete_moderations_for_item = AsyncMock(return_value=[10, 11])
-    app_client.moder_service.redis_repo.delete_for_item = AsyncMock()
     response = app_client.post("/close/1")
     assert response.status_code == HTTPStatus.OK
     body = response.json()

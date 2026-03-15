@@ -40,17 +40,12 @@ def mock_service():
 
 @pytest.fixture
 def mock_moderation_service():
-    redis_repo = AsyncMock()
-    redis_repo.get_moderation_for_item = AsyncMock(return_value=None)
-    redis_repo.get_moderation = AsyncMock(return_value=None)
-    redis_repo.set_moderation = AsyncMock()
-    redis_repo.set_prediction_for_item = AsyncMock()
-    redis_repo.delete_for_item = AsyncMock()
-
     moder_repo = AsyncMock()
-    moder_repo.get_moderation_for_item = AsyncMock(return_value=None)
-    moder_repo.get_moderation = AsyncMock(return_value=None)
-    moder_repo.delete_moderations_for_item = AsyncMock(return_value=[])
+    moder_repo.get_completed_for_item = AsyncMock(return_value=None)
+    moder_repo.get_result = AsyncMock(return_value=None)
+    moder_repo.create_and_cache = AsyncMock()
+    moder_repo.save_to_cache = AsyncMock()
+    moder_repo.delete_for_item = AsyncMock(return_value=[])
 
     item_repo = AsyncMock()
     item_repo.get_item = AsyncMock(return_value=None)
@@ -58,7 +53,6 @@ def mock_moderation_service():
 
     return ModerationService(
         moder_repo=moder_repo,
-        redis_repo=redis_repo,
         item_repo=item_repo,
     )
 
