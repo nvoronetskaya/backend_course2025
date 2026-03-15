@@ -9,7 +9,7 @@ class ModerationResultRepository:
     def __init__(self, db, redis_repo=None):
         self.db = db
         self.redis_repo = redis_repo
-    
+
     def to_bool(self, val):
         if isinstance(val, str):
             return val.lower() != "false"
@@ -20,7 +20,7 @@ class ModerationResultRepository:
             return None
         d = dict(row)
         if "is_violation" in d and d["is_violation"] is not None:
-            d["is_violation"] = self._to_bool(d["is_violation"])
+            d["is_violation"] = self.to_bool(d["is_violation"])
         return SimpleNamespace(**d)
 
     def is_completed(self, result):

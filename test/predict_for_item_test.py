@@ -1,11 +1,11 @@
 from http import HTTPStatus
+from types import SimpleNamespace
 import pytest
 from unittest.mock import AsyncMock
-from db.tables.item import Item as DbItem
 
 @pytest.mark.asyncio
 async def test_positive_prediction_for_verified_seller_with_images(app_client):
-    mock_item = DbItem(
+    mock_item = SimpleNamespace(
         id=1,
         name="Premium Headphones",
         description="High-quality wireless headphones with noise cancellation and long battery life",
@@ -22,7 +22,7 @@ async def test_positive_prediction_for_verified_seller_with_images(app_client):
 
 @pytest.mark.asyncio
 async def test_negative_prediction_for_item_without_images(app_client):
-    mock_item = DbItem(
+    mock_item = SimpleNamespace(
         id=2,
         name="Suspicious Item",
         description="Item with no images - likely a violation",
@@ -40,7 +40,7 @@ async def test_negative_prediction_for_item_without_images(app_client):
 
 @pytest.mark.asyncio
 async def test_negative_prediction_for_item_with_few_images(app_client):
-    mock_item = DbItem(
+    mock_item = SimpleNamespace(
         id=3,
         name="Low Quality Ad",
         description="Short desc",
@@ -67,15 +67,15 @@ async def test_item_not_found(app_client):
 @pytest.mark.asyncio
 async def test_create_multiple_items_and_predict(app_client):
     items_data = [
-        DbItem(id=10, name="Laptop Pro 2024", 
-               description="Professional laptop with high-end specs for developers and creators",
-               category=1, images_qty=10),
-        DbItem(id=11, name="Gaming Mouse",
-               description="RGB gaming mouse with adjustable DPI",
-               category=2, images_qty=5),
-        DbItem(id=12, name="Budget Phone",
-               description="Cheap phone",
-               category=3, images_qty=1)
+        SimpleNamespace(id=10, name="Laptop Pro 2024",
+                       description="Professional laptop with high-end specs for developers and creators",
+                       category=1, images_qty=10),
+        SimpleNamespace(id=11, name="Gaming Mouse",
+                       description="RGB gaming mouse with adjustable DPI",
+                       category=2, images_qty=5),
+        SimpleNamespace(id=12, name="Budget Phone",
+                       description="Cheap phone",
+                       category=3, images_qty=1)
     ]
     predictions = []
     for mock_item in items_data:
@@ -97,7 +97,7 @@ async def test_create_multiple_items_and_predict(app_client):
 
 @pytest.mark.asyncio
 async def test_item_retrieval_and_prediction(app_client):
-    mock_item = DbItem(
+    mock_item = SimpleNamespace(
         id=20,
         name="Test Product XYZ",
         description="This is a detailed description for testing",
@@ -121,7 +121,7 @@ async def test_item_retrieval_and_prediction(app_client):
     (10, False),
 ])
 async def test_images_qty_threshold(app_client, images_qty, expected_violation):
-    mock_item = DbItem(
+    mock_item = SimpleNamespace(
         id=30,
         name=f"Product with {images_qty} images",
         description="Product description for threshold testing",
@@ -150,7 +150,7 @@ async def test_invalid_item_id_negative(app_client):
 
 @pytest.mark.asyncio
 async def test_prediction_uses_correct_item_data(app_client):
-    mock_item = DbItem(
+    mock_item = SimpleNamespace(
         id=40,
         name="Test Item",
         description="A" * 500,

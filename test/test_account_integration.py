@@ -3,7 +3,7 @@ import hashlib
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from db.database import Base
-from db.tables.account import Account
+import db.tables.account
 from repository.account.account_repository import AccountRepository
 
 

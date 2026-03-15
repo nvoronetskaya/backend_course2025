@@ -1,8 +1,9 @@
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from db.database import Base
-from db.tables.item import Item as DbItem
-from db.tables.moderation_result import ModerationResult
+import db.tables.item
+import db.tables.moderation_result
 from repository.item.item_repository import ItemRepository
 from repository.moderation_result.moderation_result_repository import ModerationResultRepository
 
@@ -34,11 +35,24 @@ async def seed_item(db_session, **overrides):
         images_qty=5,
     )
     defaults.update(overrides)
-    item = DbItem(**defaults)
-    db_session.add(item)
+    result = await db_session.execute(
+        text(
+            "INSERT INTO items (name, description, category, images_qty) "
+            "VALUES (:name, :description, :category, :images_qty) "
+            "RETURNING *"
+        ),
+        defaults,
+    )
     await db_session.commit()
-    await db_session.refresh(item)
-    return item
+    row = result.mappings().first()
+    from types import SimpleNamespace
+    d = dict(row)
+    val = d.get("is_closed", False)
+    if isinstance(val, str):
+        d["is_closed"] = val.lower() != "false"
+    else:
+        d["is_closed"] = bool(val)
+    return SimpleNamespace(**d)
 
 @pytest.mark.integration
 class TestItemRepository:
