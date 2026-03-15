@@ -18,6 +18,10 @@ import os
 import sentry_sdk
 from starlette.concurrency import run_in_threadpool
 from db.database import get_db, session_maker, engine, Base
+import db.tables.item
+import db.tables.seller 
+import db.tables.moderation_result
+import db.tables.account
 from utils import load_synthetic_data
 from app.clients.kafka import KafkaProducer
 from app.clients.settings import KAFKA_BOOTSTRAP

@@ -1,53 +1,76 @@
 import hashlib
+from types import SimpleNamespace
 
-from sqlalchemy import select, delete
-from db.tables.account import Account
+from sqlalchemy import text
 
 
 class AccountRepository:
     def __init__(self, db):
         self.db = db
 
-    @staticmethod
-    def _hash_password(password: str) -> str:
+    def hash_password(self, password: str) -> str:
         return hashlib.md5(password.encode()).hexdigest()
 
-    async def create_account(self, login: str, password: str) -> Account:
-        account = Account(login=login, password=self._hash_password(password))
-        self.db.add(account)
+    def to_bool(self, val):
+        if isinstance(val, str):
+            return val.lower() != "false"
+        return bool(val)
+
+    def to_obj(self, row):
+        if row is None:
+            return None
+        d = dict(row)
+        d["is_blocked"] = self.to_bool(d["is_blocked"])
+        return SimpleNamespace(**d)
+
+    async def create_account(self, login: str, password: str):
+        result = await self.db.execute(
+            text(
+                "INSERT INTO account (login, password, is_blocked) "
+                "VALUES (:login, :password, false) "
+                "RETURNING *"
+            ),
+            {"login": login, "password": self.hash_password(password)},
+        )
         await self.db.commit()
-        await self.db.refresh(account)
-        return account
+        return self.to_obj(result.mappings().first())
 
     async def get_by_id(self, account_id: int):
         result = await self.db.execute(
-            select(Account).where(Account.id == account_id).limit(1)
+            text("SELECT * FROM account WHERE id = :id LIMIT 1"),
+            {"id": account_id},
         )
-        return result.scalars().first()
+        return self.to_obj(result.mappings().first())
 
     async def delete_account(self, account_id: int) -> bool:
         account = await self.get_by_id(account_id)
         if account is None:
             return False
         await self.db.execute(
-            delete(Account).where(Account.id == account_id)
+            text("DELETE FROM account WHERE id = :id"),
+            {"id": account_id},
         )
         await self.db.commit()
         return True
 
     async def block_account(self, account_id: int):
-        account = await self.get_by_id(account_id)
-        if account is None:
-            return None
-        account.is_blocked = True
+        result = await self.db.execute(
+            text(
+                "UPDATE account SET is_blocked = true "
+                "WHERE id = :id RETURNING *"
+            ),
+            {"id": account_id},
+        )
         await self.db.commit()
-        await self.db.refresh(account)
-        return account
+        return self.to_obj(result.mappings().first())
 
     async def get_by_login_and_password(self, login: str, password: str):
         result = await self.db.execute(
-            select(Account)
-            .where(Account.login == login, Account.password == self._hash_password(password))
-            .limit(1)
+            text(
+                "SELECT * FROM account "
+                "WHERE login = :login AND password = :password "
+                "LIMIT 1"
+            ),
+            {"login": login, "password": self.hash_password(password)},
         )
-        return result.scalars().first()
+        return self.to_obj(result.mappings().first())

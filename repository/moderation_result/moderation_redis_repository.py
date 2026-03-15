@@ -16,6 +16,8 @@ class ModerationRedisRepository:
             return dumps(data.model_dump())
         if isinstance(data, dict):
             return dumps(data)
+        if hasattr(data, '__dict__'):
+            return dumps(vars(data), default=str)
         return dumps(data)
 
     async def get_moderation(self, id):

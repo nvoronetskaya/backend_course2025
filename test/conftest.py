@@ -7,7 +7,7 @@ from repository.model.local_model_repository import LocalModelRepository
 from service.model_service import ModelService
 from service.moderation_service import ModerationService
 from unittest.mock import patch, MagicMock, AsyncMock
-from db.tables.item import Item
+from types import SimpleNamespace
 import os
 import sys
 import pytest_asyncio
@@ -26,8 +26,8 @@ sys.modules['mlflow.sklearn'] = mock_mlflow.sklearn
 def mock_service():
     mock_repo = LocalModelRepository()
     item_repo = MagicMock()
-    item = Item(
-        id = 1,
+    item = SimpleNamespace(
+        id=1,
         name="Wireless Earbuds X2",
         description="Compact TWS earbuds with active noise reduction and 20h total playback.",
         category=2,

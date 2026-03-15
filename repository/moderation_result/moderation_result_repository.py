@@ -1,13 +1,27 @@
 import time
-from sqlalchemy import select, delete
 from datetime import datetime, timezone
-from db.tables.moderation_result import ModerationResult
+from types import SimpleNamespace
+
+from sqlalchemy import text
 from app.metrics import DB_QUERY_DURATION
 
 class ModerationResultRepository:
     def __init__(self, db, redis_repo=None):
         self.db = db
         self.redis_repo = redis_repo
+    
+    def to_bool(self, val):
+        if isinstance(val, str):
+            return val.lower() != "false"
+        return bool(val)
+
+    def to_obj(self, row):
+        if row is None:
+            return None
+        d = dict(row)
+        if "is_violation" in d and d["is_violation"] is not None:
+            d["is_violation"] = self._to_bool(d["is_violation"])
+        return SimpleNamespace(**d)
 
     def is_completed(self, result):
         if isinstance(result, dict):
@@ -16,38 +30,47 @@ class ModerationResultRepository:
 
     async def get_moderation(self, id):
         start = time.perf_counter()
-        result = await self.db.execute(select(ModerationResult).where(ModerationResult.id == id).limit(1))
+        result = await self.db.execute(
+            text("SELECT * FROM moderation_results WHERE id = :id LIMIT 1"),
+            {"id": id},
+        )
         DB_QUERY_DURATION.labels(query_type="select_moderation").observe(time.perf_counter() - start)
-        return result.scalars().first()
+        return self.to_obj(result.mappings().first())
 
     async def get_moderation_for_item(self, item_id):
         start = time.perf_counter()
-        result = await self.db.execute(select(ModerationResult).where(ModerationResult.item_id == item_id).limit(1))
+        result = await self.db.execute(
+            text("SELECT * FROM moderation_results WHERE item_id = :item_id LIMIT 1"),
+            {"item_id": item_id},
+        )
         DB_QUERY_DURATION.labels(query_type="select_moderation_by_item").observe(time.perf_counter() - start)
-        return result.scalars().first()
+        return self.to_obj(result.mappings().first())
 
     async def create_moderation(self, item_id):
-        db_moderation = ModerationResult(
-            item_id=item_id,
-            status="pending",
-            retry_count=0
-        )
-        self.db.add(db_moderation)
         start = time.perf_counter()
+        result = await self.db.execute(
+            text(
+                "INSERT INTO moderation_results (item_id, status, retry_count) "
+                "VALUES (:item_id, 'pending', 0) "
+                "RETURNING *"
+            ),
+            {"item_id": item_id},
+        )
         await self.db.commit()
         DB_QUERY_DURATION.labels(query_type="insert_moderation").observe(time.perf_counter() - start)
-        await self.db.refresh(db_moderation)
-        return db_moderation
-    
+        return self.to_obj(result.mappings().first())
+
     async def get_latest_pending(self, db, item_id):
-        res = await db.execute(
-            select(ModerationResult)
-            .where(ModerationResult.item_id == item_id, ModerationResult.status == "pending")
-            .order_by(ModerationResult.id.desc())
-            .limit(1)
+        result = await db.execute(
+            text(
+                "SELECT * FROM moderation_results "
+                "WHERE item_id = :item_id AND status = 'pending' "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            {"item_id": item_id},
         )
-        return res.scalars().first()
-    
+        return self.to_obj(result.mappings().first())
+
     async def update_task(
         self,
         db,
@@ -58,34 +81,56 @@ class ModerationResultRepository:
         error_message=None,
         retry_count=None,
     ):
-        obj = await db.get(ModerationResult, task_id)
-        if obj is None:
-            return
-        obj.status = status
-        obj.is_violation = is_violation
-        obj.probability = probability
-        obj.error_message = error_message
-        if retry_count is not None:
-            obj.retry_count = retry_count
-        obj.processed_at = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        await db.execute(
+            text(
+                "UPDATE moderation_results SET "
+                "status = :status, "
+                "is_violation = :is_violation, "
+                "probability = :probability, "
+                "error_message = :error_message, "
+                "retry_count = COALESCE(:retry_count, retry_count), "
+                "processed_at = :processed_at "
+                "WHERE id = :id"
+            ),
+            {
+                "id": task_id,
+                "status": status,
+                "is_violation": is_violation,
+                "probability": probability,
+                "error_message": error_message,
+                "retry_count": retry_count,
+                "processed_at": now,
+            },
+        )
         await db.commit()
-    
+
     async def increment_retry_count(self, db, task_id):
-        obj = await db.get(ModerationResult, task_id)
-        if obj is None:
-            return None
-        obj.retry_count += 1
+        result = await db.execute(
+            text(
+                "UPDATE moderation_results "
+                "SET retry_count = retry_count + 1 "
+                "WHERE id = :id "
+                "RETURNING retry_count"
+            ),
+            {"id": task_id},
+        )
         await db.commit()
-        return obj.retry_count
+        row = result.mappings().first()
+        if row is None:
+            return None
+        return row["retry_count"]
 
     async def delete_moderations_for_item(self, item_id):
         result = await self.db.execute(
-            select(ModerationResult.id).where(ModerationResult.item_id == item_id)
+            text("SELECT id FROM moderation_results WHERE item_id = :item_id"),
+            {"item_id": item_id},
         )
-        task_ids = [row[0] for row in result.all()]
+        task_ids = [row["id"] for row in result.mappings().all()]
         if task_ids:
             await self.db.execute(
-                delete(ModerationResult).where(ModerationResult.item_id == item_id)
+                text("DELETE FROM moderation_results WHERE item_id = :item_id"),
+                {"item_id": item_id},
             )
             await self.db.commit()
         return task_ids
